@@ -5,13 +5,15 @@
   (:require ["readline" :as readline])
   (:require [cljs.core.async :refer [<! chan >! put! take! timeout] :as async]))
 
+;; jsオブジェクトのmethodがないかもしれないという警告を黙らせる
+(set! *warn-on-infer* false)
+
 (def SCOPES ["https://www.googleapis.com/auth/spreadsheets"])
 
 (def TOKEN_PATH "token.json")
 
 (def SHEET {:spreadsheetId "1XRKKdU4rTlK4Tiz-HPHp8_CAgBdbskh54s0_QoJv1Xs"
             :range "tasks!A1:E13"})
-
 
 (defn js->clj-key [js-obj]
   (js->clj js-obj :keywordize-keys true))
@@ -22,7 +24,7 @@
              (fn [err content]
                (if (nil? err)
                  (go (>! out-chan content))
-                 (go (>! out-chan "err")))))
+                 (put! out-chan "{\"error\": true}"))))
   out-chan)
 
 (defn write-file [file-name content]
@@ -31,56 +33,63 @@
                                         (println (str "Token stored to " TOKEN_PATH))
                                         (.error js/console err)))))
 
-(defn authorize [credentail-chan token-chan]
-  (let [ch (chan)]
-    (go (let [credential (<! credentail-chan)
-              token (<! token-chan)
-              {:keys [client_secret client_id redirect_uris]} (:installed credential)
-              oAuthClient (new (.-OAuth2 (.-auth google)) client_id client_secret (nth redirect_uris 0))]
+;; (defn authorize [oAuthClient token-chan]
+;;   (let [ch (chan)]
+;;     (println "i---------------------")
+;;     (println "in authorize")
+;;     (println "i---------------------")
+;;     (go (let [token (<! token-chan)]
+;;           (println "t---------------------")
+;;           (println token)
+;;           (println "t---------------------")
+;;           (.setCredentials oAuthClient token)
+;;           (>! ch oAuthClient)))
+;;     ch))
 
-          (.setCredentials oAuthClient token)
+(defn authorize [oAuthClient token]
+  (.setCredentials oAuthClient token)
+  oAuthClient)
 
-          (>! ch oAuthClient)))
-    ch))
 
-(defn mk-auth-client [credentail]
+(defn mk-auth-client [credential]
   (let [{:keys [client_secret client_id redirect_uris]} (:installed credential)
         oAuthClient (new (.-OAuth2 (.-auth google)) client_id client_secret (nth redirect_uris 0))]
     oAuthClient))
 
-;(defn )
-; in: oAuthcClient
-; out: authedClient
-
-(defn get-token [authClient file]
-  (let [content (read-file file (chan))]
-    (go (if (= (<! content) "err")
-       (get-new-token authClient (read-cmdline authClient))
-       content))))
 
 (defn read-cmdline [authClient]
   (let [ch (chan)
         auth-url (.generateAuthUrl authClient (clj->js {:access_type "offline" :scope SCOPES}))
         rl (.createInterface readline (clj->js {:input (.-stdin js/process)
                                                 :output (.-stdout js/process)}))]
-    (println (str "Authorize this app by visiting this url:"))
+    (println (str "Authorize this app by visiting this url:" auth-url))
     (.question rl "Enter the code from that page here: "
                (fn [code]
                  (.close rl)
+                 (println "OK?")
                  (put! ch code)))
     ch))
 
-(defn get-new-token [authClient cmd-chan]
+(defn get-new-token [authClient cmd]
   (let [ch (chan)]
-    (go (let [cmd (<! cmd-chan)]
-          (.getToken authClient cmd (fn [err token]
-                                      (put! ch token)
-                                      (write-file TOKEN_PATH token)))))
+    (.getToken authClient cmd (fn [err token]
+                                (write-file TOKEN_PATH (.stringify js/JSON token))
+                                (put! ch token)))
     ch))
 
-(defn get-sheet-value [auth-chan params]
+(defn get-token [authClient file]
+  (go (let [content (<! (read-file file (chan 1 (map (.-parse js/JSON)))))]
+        (if (.-error content)
+          (let [cmd (<! (read-cmdline authClient))]
+            ;; こうしないといけないのはなぜか？
+            ;; なるほど処理がすすんでしまうのだ
+            ;; いや型をみればこれでただしいんだよ
+            (<! (get-new-token authClient cmd)))
+          content))))
+
+(defn get-sheet-value [auth params]
   (let [ch (chan)]
-    (go (let [auth (<! auth-chan)
+    (go (let [
               args (clj->js {:version "v4" :auth auth})
               sheets (.sheets google args)]
 
@@ -113,9 +122,12 @@
         (mapv (fn [row] (println row)) values))))
 
 (defn main []
-  (go (let [cred-ch (read-file "credentials.json" (chan 1 (map (comp js->clj-key (.-parse js/JSON)))))
-            token-ch (read-file "token.json" (chan 1 (map (.-parse js/JSON))))
-            auth-chan (authorize cred-ch token-ch)
+  (go (let [cred (<! (read-file "credentials.json" (chan 1 (map (comp js->clj-key (.-parse js/JSON))))))
+            authClient (mk-auth-client cred)
+;            token-ch (read-file "token.json" (chan 1 (map (.-parse js/JSON))))
+            ; 明示的に止めたい場合を考慮しないといけない
+            token (<! (get-token authClient "token.json"))
+            auth-chan (authorize authClient token)
             ]
 
        (output-chan (get-sheet-value auth-chan SHEET))
@@ -123,6 +135,7 @@
 ;        (println (<! auth-chan))
     ))
 )
+
 
 ;; (go (let [token-ch (read-file "a" (chan))]
 ;;       (println (<! token-ch))))

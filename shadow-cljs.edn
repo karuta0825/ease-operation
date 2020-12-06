@@ -10,6 +10,7 @@
   {:main operation.core/main
    :target :node-script
    :output-to "index.js"
+   :infer-externs true
    :compiler-options {
                       :optimizations :simple
                       :variable-renaming :off
