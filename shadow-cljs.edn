@@ -1,0 +1,19 @@
+;; shadow-cljs configuration
+{:source-paths
+ ["src"]
+
+ :dependencies
+ []
+
+ :builds
+ {:app
+  {:main operation.core/main
+   :target :node-script
+   :output-to "index.js"
+   :compiler-options {
+                      :optimizations :simple
+                      :variable-renaming :off
+                      :property-renaming :off
+                      :pretty-print true
+                      :source-map true}}
+  }}
