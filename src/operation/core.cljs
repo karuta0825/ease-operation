@@ -32,10 +32,10 @@
 
 (defn twenty-six-base
   [n]
-  (loop [num n
-         result ()]
+  (loop [num (quot n 26)
+         result (list (rem n 26))]
     (if (not= num 0)
-      (recur (quot num 26) (conj result (dec (mod num 26))))
+      (recur (quot num 26) (conj result (dec (rem num 26))))
       result)))
 
 
@@ -44,9 +44,10 @@
   (clojure.string/join (map #(nth alphabet %) (twenty-six-base num))))
 
 
-(nth alphabet 25)
-
-
+(nth alphabet 2)
+(twenty-six-base 52)
+(map get-column (range 53 80))
+(map #(nth alphabet %) (twenty-six-base 28))
 (map first (filter (fn [[idx num]] (even? num)) (map-indexed vector (range 10 20))))
 
 
@@ -281,37 +282,39 @@
    ")))
 
 
-(go (let [credential-path (chan)
-          credential (chan 1 (map (comp mk-auth-client js->clj-key (.-parse js/JSON))))
-          auth-url (chan 1 (map generate-url))
-          req-auth (chan)
-          token-path (chan)
-          req-token (chan)
-          tmp (chan)
-          token (chan 1 (map (.-parse js/JSON)))
-          passcode (chan)
-          authed-client (chan)
-          m-auth (async/mult credential)
-          out-ch (chan)
-          exception (chan)]
+(let [credential-path (chan)
+      credential (chan 1 (map (comp mk-auth-client js->clj-key (.-parse js/JSON))))
+      auth-url (chan 1 (map generate-url))
+      req-auth (chan)
+      token-path (chan)
+      req-token (chan)
+      tmp (chan)
+      token (chan 1 (map (.-parse js/JSON)))
+      passcode (chan)
+      authed-client (chan)
+      m-auth (async/mult credential)
+      out-ch (chan)
+      exception (chan)]
 
-      (async/tap m-auth auth-url)
-      (async/tap m-auth req-auth)
-      (async/tap m-auth tmp)
+  (async/tap m-auth auth-url)
+  (async/tap m-auth req-auth)
+  (async/tap m-auth tmp)
 
-      (my-read-file credential-path credential exception)
-      (my-read-file token-path token req-token)
-      (ask-passcode req-token auth-url passcode)
-      (make-new-token tmp passcode token)
-      (make-auth-client req-auth token authed-client)
-      (gain-sheet-value authed-client SHEET out-ch)
+  (my-read-file credential-path credential exception)
+  (my-read-file token-path token req-token)
 
-      (go (>! credential-path CREDENTIAL_PATH))
-      (go (>! token-path TOKEN_PATH))
+  (ask-passcode req-token auth-url passcode)
+  (make-new-token tmp passcode token)
 
-      (->> (get-in (<! out-ch) [:data :values])
-;           (drop 1)
- ;          (map #(my-string %))
+  (make-auth-client req-auth token authed-client)
+  (gain-sheet-value authed-client SHEET out-ch)
+
+  (go (>! credential-path CREDENTIAL_PATH))
+  (go (>! token-path TOKEN_PATH))
+
+  (go (->> (get-in (<! out-ch) [:data :values])
+                                        ;           (drop 1)
+                                        ;          (map #(my-string %))
            (search-update-row-idx 3)
            (mapv #(println %)))))
 
