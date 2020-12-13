@@ -1,14 +1,20 @@
 (ns operation.core
   (:require
     [cljs.core.async :as async :refer [<! >! chan put!]]
-    ["fs" :as fs]
+    [clojure.string :as str]
+    ["fs" :as fs]   
     ["googleapis" :refer [google]]
-    ["readline" :as readline])
+    ["readline" :as readline]
+    ["command-line-args" :as cla])
   (:require-macros
     [cljs.core.async.macros :refer [go]]))
 
 ;; jsオブジェクトのmethodがないかもしれないという警告を黙らせる
 (set! *warn-on-infer* false)
+
+(def option-definitions [{:name "method" :alias "m" :type js/String}
+                         {:name "date" :alias "d" :type js/String}
+                         {:name "id" :alias "i" :type js/String}])
 
 
 (def SCOPES ["https://www.googleapis.com/auth/spreadsheets"])
@@ -19,15 +25,14 @@
 
 (def SHEET
   {:spreadsheetId "1chKCceg5UejYfEEZ7KSGIlYcb9-EjHWF0dbEMuEaie4"
-   :range "request!A3:E"})
+   :range "request!A1:E"})
 
 
 (defn ss-range
   [sheet range])
 
-
 (def alphabet
-  (map #((comp clojure.string/upper-case char) %) (range 97 (+ 97 26))))
+  (map #((comp str/upper-case char) %) (range 97 (+ 97 26))))
 
 
 (defn twenty-six-base
@@ -41,14 +46,14 @@
 
 (defn get-column
   [num]
-  (clojure.string/join (map #(nth alphabet %) (twenty-six-base num))))
+  (str/join (map #(nth alphabet %) (twenty-six-base num))))
 
-
-(nth alphabet 2)
-(twenty-six-base 52)
-(map get-column (range 53 80))
-(map #(nth alphabet %) (twenty-six-base 28))
-(map first (filter (fn [[idx num]] (even? num)) (map-indexed vector (range 10 20))))
+;; (first (map first (filter (fn [[idx v]] (= v "X")) (map-indexed vector alphabet))))
+;; (nth alphabet 2)
+;; (twenty-six-base 52)
+;; (map get-column (range 50 80))
+;; (map #(nth alphabet %) (twenty-six-base 28))
+;; (map first (filter (fn [[idx num]] (even? num)) (map-indexed vector (range 10 20))))
 
 
 (defn get-range
@@ -178,17 +183,6 @@
         (mapv (fn [row] (prn row)) values))))
 
 
-(defn main
-  []
-  ;; (go (let [cred (<! (read-file CREDENTIAL_PATH (chan 1 (map (comp js->clj-key (.-parse js/JSON))))))
-  ;;           authClient (mk-auth-client cred)
-  ;;           token-ch (get-token authClient TOKEN_PATH)
-  ;;           auth-chan (authorize authClient token-ch)
-  ;;           ]
-  ;;       (output-chan (get-sheet-value auth-chan SHEET))
-  ;;       ))
-  )
-
 
 (defn my-read-file
   [in-ch out-ch ex-ch]
@@ -242,14 +236,35 @@
                   (put! output-ch (js->clj content :keywordize-keys true))
                   (println err)))))))
 
+(defn my-gain-sheet-value
+  [oAuthClient params] 
+  (let [ch (chan)]
+    (go (let [args (clj->js {:version "v4" :auth oAuthClient})
+              sheets (.sheets google args)]
+          (.get (.-values (.-spreadsheets sheets))
+                (clj->js params)
+                (fn [err content]
+                  (if (nil? err)
+                    (put! ch (get-in (js->clj content :keywordize-keys true) [:data :values]))
+                    (println err))))))
+    ch))
 
-(defn search-update-row-idx
+
+(defn search-row
   [id sheet-values]
   (->> sheet-values
        (map-indexed vector)
        (filter (fn [[idx row]] (= (nth row 0) (str id))))
        (map (comp inc first))))
 
+
+(defn make-update-params [ssId sheet row column value]
+  {:spreadsheetId ssId
+   :range (str sheet "!A" row)
+   :valueInputOption "USER_ENTERED"
+   :resource {:values [(conj (into [] (take (dec column) (repeat nil))) value)]}})
+
+(make-update-params (:spreadsheetId SHEET) "request" 12 7 "2020/12/22")
 
 (defn update-sheet-value
   [auth-ch params output-ch]
@@ -262,61 +277,133 @@
                    (println err)
                    (println res))))))
 
+(defn my-update-sheet-value
+  [oAuthClient params]
+  (go (let [args (clj->js {:version "v4" :auth oAuthClient})
+            sheets (.sheets google args)]
+
+        (.update (.-values (.-spreadsheets sheets))
+                 (clj->js params)
+                 (fn [res err]
+                   (println err)
+                   (println res))))))
+
+(defn my-authorize [c t]
+  (let [credential-path (chan)
+        credential (chan 1 (map (comp mk-auth-client js->clj-key (.-parse js/JSON))))
+        auth-url (chan 1 (map generate-url))
+        req-auth (chan)
+        token-path (chan)
+        req-token (chan)
+        tmp (chan)
+        token (chan 1 (map (.-parse js/JSON)))
+        passcode (chan)
+        authed-client (chan)
+        m-auth (async/mult credential)
+        exception (chan)]
+    
+      (async/tap m-auth auth-url)
+      (async/tap m-auth req-auth)
+      (async/tap m-auth tmp)
+
+      (my-read-file credential-path credential exception)
+      (my-read-file token-path token req-token)
+
+      (ask-passcode req-token auth-url passcode)
+      (make-new-token tmp passcode token)
+
+      (make-auth-client req-auth token authed-client)
+
+      (go (>! credential-path c))
+      (go (>! token-path t))
+            
+      authed-client))
 
 (defn my-string
   [row]
   (let [no (nth row 0)
         date (nth row 1)
-        name (nth row 2)
-        content (nth row 3)]
+        group (nth row 2)
+        name (nth row 3)
+        content (nth row 4)]
     (str
       "** TODO 依頼" no "
    :PROPERTIES:
+   :type:  operation
    :id:    " no "
    :date:  " date "
-   :name:   " name "
+   :group: " group"
+   :name:  " name "
    :END:
    
    [内容]
    " content "
    ")))
 
+(defn show-spread-sheet []
+  (go (let [oAuthClient (<! (my-authorize CREDENTIAL_PATH TOKEN_PATH))
+            data (<! (my-gain-sheet-value oAuthClient SHEET))]
+        (mapv (comp println my-string) (drop 1 data)))))
 
-(let [credential-path (chan)
-      credential (chan 1 (map (comp mk-auth-client js->clj-key (.-parse js/JSON))))
-      auth-url (chan 1 (map generate-url))
-      req-auth (chan)
-      token-path (chan)
-      req-token (chan)
-      tmp (chan)
-      token (chan 1 (map (.-parse js/JSON)))
-      passcode (chan)
-      authed-client (chan)
-      m-auth (async/mult credential)
-      out-ch (chan)
-      exception (chan)]
+(defn update [no value]
+  (go (let [oAuthClient (<! (my-authorize CREDENTIAL_PATH TOKEN_PATH))
+            rows (<! (my-gain-sheet-value oAuthClient SHEET))
+            target-row (first (search-row no rows))
+            column 6]
+        (my-update-sheet-value oAuthClient (make-update-params (:spreadsheetId SHEET) "request" target-row column value)))))
 
-  (async/tap m-auth auth-url)
-  (async/tap m-auth req-auth)
-  (async/tap m-auth tmp)
+(defn main
+  []
+  (let [options (js->clj (cla (clj->js option-definitions)) :keywordize-keys true)]
+    (if (= (:method options) "get") 
+        (show-spread-sheet)
+        (update (:id options) (:date options)))))
 
-  (my-read-file credential-path credential exception)
-  (my-read-file token-path token req-token)
 
-  (ask-passcode req-token auth-url passcode)
-  (make-new-token tmp passcode token)
+  ;; (go (let [cred (<! (read-file CREDENTIAL_PATH (chan 1 (map (comp js->clj-key (.-parse js/JSON))))))
+  ;;           authClient (mk-auth-client cred)
+  ;;           token-ch (get-token authClient TOKEN_PATH)
+  ;;           auth-chan (authorize authClient token-ch)
+  ;;           ]
+  ;;       (output-chan (get-sheet-value auth-chan SHEET))
+  ;;       ))
 
-  (make-auth-client req-auth token authed-client)
-  (gain-sheet-value authed-client SHEET out-ch)
 
-  (go (>! credential-path CREDENTIAL_PATH))
-  (go (>! token-path TOKEN_PATH))
+;; (let [credential-path (chan)
+;;       credential (chan 1 (map (comp mk-auth-client js->clj-key (.-parse js/JSON))))
+;;       auth-url (chan 1 (map generate-url))
+;;       req-auth (chan)
+;;       token-path (chan)
+;;       req-token (chan)
+;;       tmp (chan)
+;;       token (chan 1 (map (.-parse js/JSON)))
+;;       passcode (chan)
+;;       authed-client (chan)
+;;       m-auth (async/mult credential)
+;;       out-ch (chan)
+;;       exception (chan)]
 
-  (go (->> (get-in (<! out-ch) [:data :values])
-                                        ;           (drop 1)
-                                        ;          (map #(my-string %))
-           (search-update-row-idx 3)
-           (mapv #(println %)))))
+;;   (async/tap m-auth auth-url)
+;;   (async/tap m-auth req-auth)
+;;   (async/tap m-auth tmp)
+
+;;   (my-read-file credential-path credential exception)
+;;   (my-read-file token-path token req-token)
+
+;;   (ask-passcode req-token auth-url passcode)
+;;   (make-new-token tmp passcode token)
+
+;;   (make-auth-client req-auth token authed-client)
+;;   ;(gain-sheet-value authed-client SHEET out-ch)
+;;   (update-sheet-value authed-client (make-update-params (:spreadsheetId SHEET) "request" 2 6 "2020/12/11") out-ch)
+
+;;   (go (>! credential-path CREDENTIAL_PATH))
+;;   (go (>! token-path TOKEN_PATH))
+
+;;   (go (->> (get-in (<! out-ch) [:data :values])
+;;            (search-update-row-idx 3)
+;;  ;          (mapv #(println %))
+;;            )))
 
 
 ;; (let [service "ac"
