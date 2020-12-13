@@ -1,9 +1,12 @@
 ;; shadow-cljs configuration
-{:source-paths
+{
+ :source-paths
  ["src"]
 
  :dependencies
  []
+
+ :nrepl {:middleware [refactor-nrepl.middleware/wrap-refactor]}
 
  :builds
  {:app
@@ -11,6 +14,7 @@
    :target :node-script
    :output-to "index.js"
    :infer-externs true
+   :devtools {:repl-pprint true}
    :compiler-options {
                       :optimizations :simple
                       :variable-renaming :off
