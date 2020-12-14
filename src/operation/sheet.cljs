@@ -65,11 +65,11 @@
   (go (let [args (clj->js {:version "v4" :auth oAuthClient})
             sheets (.sheets google args)]
 
-        (.update (.-values (.-spreadsheets sheets))
-                 (clj->js params)
-                 (fn [res err]
-                   (println err)
-                   (println res))))))
+        (.spreadsheets.values.update sheets
+                                     (clj->js params)
+                                     (fn [res err]
+                                       (println err)
+                                       (println res))))))
 
 
 (defn get-sheet
@@ -77,10 +77,10 @@
   (let [ch (chan)]
     (go (let [args (clj->js {:version "v4" :auth oAuthClient})
               sheets (.sheets google args)]
-          (.get (.-values (.-spreadsheets sheets))
-                (clj->js params)
-                (fn [err content]
-                  (if (nil? err)
-                    (put! ch (get-in (js->clj content :keywordize-keys true) [:data :values]))
-                    (println err))))))
+          (.spreadsheets.values.get sheets
+                                    (clj->js params)
+                                    (fn [err content]
+                                      (if (nil? err)
+                                        (put! ch (get-in (js->clj content :keywordize-keys true) [:data :values]))
+                                        (println err))))))
     ch))

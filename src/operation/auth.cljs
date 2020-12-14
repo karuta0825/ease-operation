@@ -37,7 +37,7 @@
                                         (.error js/console err)))))
 
 
-(defn- make-auth-client
+(defn- set-token
   [auth-client-ch token-ch output-ch]
   (go (let [authenticated-client (<! auth-client-ch)
             token (<! token-ch)]
@@ -67,7 +67,7 @@
                      (put! passcode-ch code))))))
 
 
-(defn- mk-auth-client
+(defn- make-auth-client
   [credential]
   (let [{:keys [client_secret client_id redirect_uris]} (:installed credential)
         authenticated-client (new (.-OAuth2 (.-auth google))
@@ -85,7 +85,7 @@
 (defn authorize
   [c t]
   (let [credential-path (chan)
-        credential (chan 1 (map (comp mk-auth-client js->clj-key (.-parse js/JSON))))
+        credential (chan 1 (map (comp make-auth-client js->clj-key (.-parse js/JSON))))
         auth-url (chan 1 (map generate-url))
         req-auth (chan)
         token-path (chan)
@@ -107,7 +107,7 @@
     (ask-passcode req-token auth-url passcode)
     (make-new-token tmp passcode token)
 
-    (make-auth-client req-auth token authed-client)
+    (set-token req-auth token authed-client)
 
     (go (>! credential-path c))
     (go (>! token-path t))

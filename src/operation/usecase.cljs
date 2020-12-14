@@ -1,7 +1,6 @@
 (ns operation.usecase
   (:require
     [cljs.core.async :as async :refer [<! >! chan put!]]
-    ["googleapis" :refer [google]]
     [operation.auth :as auth]
     [operation.sheet :as s])
   (:require-macros
@@ -10,9 +9,9 @@
 
 (def token-path "token.json")
 (def credential-path "credentials.json")
-(def offset-row 3)
+(def offset-row 2)
 (def start-column "A")
-(def end-column "E")
+(def end-column "F")
 (def sheet-name "request")
 (def spread-sheet-id "1chKCceg5UejYfEEZ7KSGIlYcb9-EjHWF0dbEMuEaie4")
 
@@ -62,7 +61,9 @@
             params {:spreadsheetId spread-sheet-id :range (str sheet-name "!" start-column offset-row ":" end-column)}
             oAuthClient (<! (auth/authorize credential-path token-path))
             data (<! (s/get-sheet oAuthClient params))]
-        (mapv (comp println format-org) data))))
+        (->> data
+             (filter (fn [v] (< (count v) 6)))
+             (mapv (comp println format-org))))))
 
 
 (defn update-spread-sheet
@@ -71,5 +72,5 @@
             params {:spreadsheetId spread-sheet-id :range (str sheet-name "!" start-column offset-row ":" end-column)}
             oAuthClient (<! (auth/authorize credential-path token-path))
             target-row (+ offset-row (search-row no (<! (s/get-sheet oAuthClient params))))
-            column 6]
-        (s/update-sheet oAuthClient (make-update-params spread-sheet-id sheet-name target-row column value)))))
+            target-column 6]
+        (s/update-sheet oAuthClient (make-update-params spread-sheet-id sheet-name target-row target-column value)))))
