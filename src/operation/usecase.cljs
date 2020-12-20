@@ -1,8 +1,10 @@
 (ns operation.usecase
   (:require
     [cljs.core.async :as async :refer [<! >! chan put!]]
+    [clojure.string :refer [join]]
     [operation.auth :as auth]
-    [operation.sheet :as s])
+    [operation.sheet :as s]
+    [operation.util :as ut])
   (:require-macros
     [cljs.core.async.macros :refer [go]]))
 
@@ -47,12 +49,12 @@
 
 
 (defn- search-row
+  "検索した行を取得する"
   [id sheet-values]
   (->> sheet-values
        (map-indexed vector)
-       (filter (fn [[idx row]] (= (nth row 0) (str id))))
-       (map first)
-       (first)))
+       (filter (fn [[idx row]] (= (nth row 0 nil) (str id))))
+       (map (fn [v] {:row (first v) :values (second v)}))))
 
 
 (defn show-spread-sheet
@@ -61,6 +63,7 @@
             params {:spreadsheetId spread-sheet-id :range (str sheet-name "!" start-column offset-row ":" end-column)}
             oAuthClient (<! (auth/authorize credential-path token-path))
             data (<! (s/get-sheet oAuthClient params))]
+
         (->> data
              (filter (fn [v] (< (count v) 6)))
              (mapv (comp println format-org))))))
@@ -71,6 +74,20 @@
   (go (let [{no :id value :date} (<! req)
             params {:spreadsheetId spread-sheet-id :range (str sheet-name "!" start-column offset-row ":" end-column)}
             oAuthClient (<! (auth/authorize credential-path token-path))
-            target-row (+ offset-row (search-row no (<! (s/get-sheet oAuthClient params))))
+            data (<! (s/get-sheet oAuthClient params))
+            update-rows (search-row no data)
+            target-row (first update-rows)
             target-column 6]
-        (s/update-sheet oAuthClient (make-update-params spread-sheet-id sheet-name target-row target-column value)))))
+
+
+        (if (not= (count update-rows) 1)
+          (println (str "更新行が" (count update-rows) "個であるため失敗しました"))
+          (do
+            (ut/write-log "log" (str (join "," (:values target-row)) "\n"))
+            (s/update-sheet oAuthClient (make-update-params
+                                          spread-sheet-id
+                                          sheet-name
+                                          (+ offset-row (:row target-row))
+                                          target-column
+                                          value)))))))
+

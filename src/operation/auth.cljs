@@ -1,40 +1,21 @@
 (ns operation.auth
   (:require
     [cljs.core.async :as async :refer [<! >! chan put!]]
-    ["fs" :as fs]
     ["googleapis" :refer [google]]
+    [operation.util :as ut]
     ["readline" :as readline])
   (:require-macros
     [cljs.core.async.macros :refer [go]]))
 
 
 (set! *warn-on-infer* false)
-(def SCOPES ["https://www.googleapis.com/auth/spreadsheets"])
-(def TOKEN_PATH "token.json")
+(def ^:private SCOPES ["https://www.googleapis.com/auth/spreadsheets"])
+(def ^:private TOKEN_PATH "token.json")
 
 
 (defn js->clj-key
   [js-obj]
   (js->clj js-obj :keywordize-keys true))
-
-
-(defn- read-file
-  [in-ch out-ch ex-ch]
-  (go (let [file (<! in-ch)]
-        (.readFile fs
-                   file
-                   (fn [err content]
-                     (if (nil? err)
-                       (put! out-ch content)
-                       (put! ex-ch err)))))))
-
-
-(defn- write-file
-  [file-name content]
-  (.writeFile fs file-name content, (fn [err]
-                                      (if (nil? err)
-                                        (println (str "Token stored to " TOKEN_PATH))
-                                        (.error js/console err)))))
 
 
 (defn- set-token
@@ -50,7 +31,7 @@
   (go (let [authClient (<! auth-ch)
             passcode (<! passcode-ch)]
         (.getToken authClient passcode (fn [err token]
-                                         (write-file TOKEN_PATH (.stringify js/JSON token))
+                                         (ut/write-file TOKEN_PATH (.stringify js/JSON token))
                                          (put! token-ch (.stringify js/JSON token)))))))
 
 
@@ -77,7 +58,7 @@
     authenticated-client))
 
 
-(defn generate-url
+(defn- generate-url
   [authClient]
   (.generateAuthUrl authClient (clj->js {:access_type "offline" :scope SCOPES})))
 
@@ -101,8 +82,8 @@
     (async/tap m-auth req-auth)
     (async/tap m-auth tmp)
 
-    (read-file credential-path credential exception)
-    (read-file token-path token req-token)
+    (ut/read-file credential-path credential exception)
+    (ut/read-file token-path token req-token)
 
     (ask-passcode req-token auth-url passcode)
     (make-new-token tmp passcode token)
